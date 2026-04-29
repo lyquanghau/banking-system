@@ -1,24 +1,42 @@
 # Blockchain Savings
 
-Hệ thống gửi tiết kiệm on-chain gồm 3 thành phần:
+This project implements an on-chain term deposit system with three contracts:
 
-- `MockUSDC`: token test 6 decimals
-- `VaultManager`: giữ quỹ trả lãi và điều khiển pause hệ thống
-- `SavingCore`: giữ principal, mint NFT, xử lý deposit / withdraw / renew
+- `MockUSDC`: a 6-decimal ERC20 token for local testing
+- `VaultManager`: the isolated interest vault plus admin pause controls
+- `SavingCore`: saving plans, deposit certificate NFTs, withdrawals, and renewals
 
-## Logic tài chính
+## Business Rules
 
-- Principal và interest được tách biệt
-- Principal nằm trong `SavingCore`
-- Interest nằm trong `VaultManager`
-- Early withdraw chỉ trả `principal - penalty`
-- Penalty đi về `feeReceiver`
-- Interest chỉ được trả từ `VaultManager`
-- Deposit mới chỉ được mở nếu vault đủ cover nghĩa vụ lãi mới
+- Principal stays in `SavingCore`
+- Interest stays in `VaultManager` until payout
+- Early withdrawal pays `principal - penalty` and zero interest
+- Penalties are sent to `feeReceiver`
+- APR and penalty are snapshotted when a deposit is opened
+- Manual renew compounds old interest into the next principal
+- Auto-renew is available after `maturity + 3 days` and preserves the original APR
+- New deposits are rejected if the vault cannot cover the new interest obligation
 
-## Cài đặt
+## Core User Flows
 
-### Smart contracts
+- `openDeposit(planId, amount)`
+- `withdrawAtMaturity(depositId)`
+- `earlyWithdraw(depositId)`
+- `renewDeposit(depositId, newPlanId)`
+- `autoRenewDeposit(depositId)`
+
+## Admin Flows
+
+- `createPlan(tenorDays, aprBps, minDeposit, maxDeposit, earlyWithdrawPenaltyBps)`
+- `updatePlan(planId, newAprBps)`
+- `enablePlan(planId)` / `disablePlan(planId)`
+- `fundVault(amount)` / `withdrawVault(amount)`
+- `setFeeReceiver(address)`
+- `pause()` / `unpause()`
+
+## Local Development
+
+### Contracts
 
 ```bash
 npm install
@@ -26,7 +44,7 @@ npm run compile
 npm test
 ```
 
-### Chạy local node và deploy
+### Local Node and Deployment
 
 ```bash
 npm run node
@@ -41,19 +59,20 @@ npm install
 npm run dev
 ```
 
-## Frontend flow
+After deploying locally, update `frontend/src/config.js` with the deployed contract addresses.
 
-Frontend hỗ trợ:
+## Frontend Demo
 
-- Kết nối MetaMask
-- Xem địa chỉ contracts
-- Deposit
-- Withdraw
-- Renew
-- Xem danh sách deposits
-- Admin tạo plan, nạp vault, pause/unpause
+The React demo supports:
 
-## Lưu ý
+- MetaMask connection
+- Viewing available saving plans
+- Opening deposits
+- Viewing deposit certificate NFTs for the connected wallet
+- Mature withdrawal, early withdrawal, and manual renew
+- Admin plan creation, vault funding, and pause controls
 
-- Sau khi deploy local, cập nhật địa chỉ contract vào `frontend/src/config.js`
-- Frontend đang dùng ABI tĩnh trong `frontend/src/abi.js`
+## Notes
+
+- Hardhat currently warns that Node `18.20.8` is unsupported. The project compiles and tests successfully in the current environment, but Node `20+` is the safer long-term target.
+- The frontend uses static ABI strings in `frontend/src/abi.js`.

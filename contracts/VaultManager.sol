@@ -16,6 +16,7 @@ contract VaultManager is Ownable, Pausable {
     event SavingCoreSet(address indexed savingCore);
     event FeeReceiverSet(address indexed feeReceiver);
     event VaultFunded(address indexed from, uint256 amount);
+    event VaultWithdrawn(address indexed to, uint256 amount);
     event InterestPaid(address indexed to, uint256 amount);
 
     error UnauthorizedCore();
@@ -49,6 +50,11 @@ contract VaultManager is Ownable, Pausable {
     function fundVault(uint256 amount) external onlyOwner {
         token.safeTransferFrom(msg.sender, address(this), amount);
         emit VaultFunded(msg.sender, amount);
+    }
+
+    function withdrawVault(uint256 amount) external onlyOwner {
+        token.safeTransfer(msg.sender, amount);
+        emit VaultWithdrawn(msg.sender, amount);
     }
 
     function payInterest(address to, uint256 amount) external onlySavingCore whenNotPaused {

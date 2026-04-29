@@ -10,7 +10,8 @@ function formatAmount(value) {
 function statusLabel(status) {
   if (status === 0n || status === 0) return "Active";
   if (status === 1n || status === 1) return "Withdrawn";
-  if (status === 2n || status === 2) return "Renewed";
+  if (status === 2n || status === 2) return "Manual Renewed";
+  if (status === 3n || status === 3) return "Auto Renewed";
   return "Unknown";
 }
 
@@ -21,23 +22,26 @@ export default function App() {
   const [network, setNetwork] = useState("");
   const [paused, setPaused] = useState(false);
   const [vaultBalance, setVaultBalance] = useState("0");
-  const [depositIds, setDepositIds] = useState([]);
+  const [plans, setPlans] = useState([]);
   const [deposits, setDeposits] = useState([]);
+  const [selectedPlanId, setSelectedPlanId] = useState("1");
   const [depositAmount, setDepositAmount] = useState("1000");
   const [vaultAmount, setVaultAmount] = useState("5000");
   const [planForm, setPlanForm] = useState({
     tenorDays: "30",
     aprBps: "1200",
-    minAmount: "100",
+    minDeposit: "100",
+    maxDeposit: "5000",
     penaltyBps: "500"
   });
   const [message, setMessage] = useState("");
 
-  const canUseContracts = account && CONTRACTS.core !== "0x0000000000000000000000000000000000000000";
+  const canUseContracts =
+    account && CONTRACTS.core !== "0x0000000000000000000000000000000000000000";
 
   async function connectWallet() {
     if (!window.ethereum) {
-      setMessage("MetaMask chưa được cài.");
+      setMessage("MetaMask is not installed.");
       return;
     }
 
@@ -52,24 +56,36 @@ export default function App() {
     setNetwork(`${nextNetwork.name} (${nextNetwork.chainId})`);
   }
 
-  async function refreshData(activeSigner = signer) {
-    if (!activeSigner || !account || !canUseContracts) return;
+  async function refreshData(activeSigner = signer, activeAccount = account) {
+    if (!activeSigner || !activeAccount || !canUseContracts) return;
 
     const core = new Contract(CONTRACTS.core, coreAbi, activeSigner);
     const vault = new Contract(CONTRACTS.vault, vaultAbi, activeSigner);
 
-    const [ids, rawPaused, rawVaultBalance] = await Promise.all([
-      core.getDepositIdsByOwner(account),
+    const [nextPlanId, ids, rawPaused, rawVaultBalance] = await Promise.all([
+      core.nextPlanId(),
+      core.getDepositIdsByOwner(activeAccount),
       vault.paused(),
       vault.availableVaultBalance()
     ]);
 
-    const nextDeposits = await Promise.all(ids.map((id) => core.getDeposit(id)));
+    const planPromises = [];
+    for (let planId = 1n; planId < nextPlanId; planId += 1n) {
+      planPromises.push(core.getPlan(planId));
+    }
 
-    setDepositIds(ids.map((id) => id.toString()));
+    const [nextPlans, nextDeposits] = await Promise.all([
+      Promise.all(planPromises),
+      Promise.all(ids.map((id) => core.getDeposit(id)))
+    ]);
+
+    setPlans(nextPlans);
     setDeposits(nextDeposits);
     setPaused(rawPaused);
     setVaultBalance(formatAmount(rawVaultBalance));
+    if (nextPlans.length && !nextPlans.find((plan) => plan.planId.toString() === selectedPlanId)) {
+      setSelectedPlanId(nextPlans[0].planId.toString());
+    }
   }
 
   async function runTx(label, fn) {
@@ -77,40 +93,49 @@ export default function App() {
       setMessage(`${label}...`);
       const tx = await fn();
       await tx.wait();
-      setMessage(`${label} thành công.`);
+      setMessage(`${label} succeeded.`);
       await refreshData();
     } catch (error) {
-      setMessage(error?.shortMessage || error?.reason || error?.message || `${label} thất bại.`);
+      setMessage(error?.shortMessage || error?.reason || error?.message || `${label} failed.`);
     }
   }
 
-  async function handleDeposit() {
+  async function handleOpenDeposit() {
     const token = new Contract(CONTRACTS.token, tokenAbi, signer);
     const core = new Contract(CONTRACTS.core, coreAbi, signer);
     const amount = parseUnits(depositAmount || "0", USDC_DECIMALS);
 
     await runTx("Approve token", () => token.approve(CONTRACTS.core, amount));
-    await runTx("Deposit", () => core.deposit(1, amount));
+    await runTx("Open deposit", () => core.openDeposit(BigInt(selectedPlanId), amount));
   }
 
-  async function handleWithdraw(tokenId) {
+  async function handleWithdrawAtMaturity(depositId) {
     const core = new Contract(CONTRACTS.core, coreAbi, signer);
-    await runTx(`Withdraw deposit #${tokenId}`, () => core.withdraw(tokenId));
+    await runTx(`Withdraw deposit #${depositId} at maturity`, () =>
+      core.withdrawAtMaturity(depositId)
+    );
   }
 
-  async function handleRenew(tokenId) {
+  async function handleEarlyWithdraw(depositId) {
     const core = new Contract(CONTRACTS.core, coreAbi, signer);
-    await runTx(`Renew deposit #${tokenId}`, () => core.renew(tokenId));
+    await runTx(`Early withdraw deposit #${depositId}`, () => core.earlyWithdraw(depositId));
+  }
+
+  async function handleRenew(depositId, newPlanId) {
+    const core = new Contract(CONTRACTS.core, coreAbi, signer);
+    await runTx(`Renew deposit #${depositId}`, () =>
+      core.renewDeposit(depositId, BigInt(newPlanId))
+    );
   }
 
   async function handleCreatePlan() {
     const core = new Contract(CONTRACTS.core, coreAbi, signer);
-    const minAmount = parseUnits(planForm.minAmount || "0", USDC_DECIMALS);
     await runTx("Create plan", () =>
       core.createPlan(
         BigInt(planForm.tenorDays),
         BigInt(planForm.aprBps),
-        minAmount,
+        parseUnits(planForm.minDeposit || "0", USDC_DECIMALS),
+        parseUnits(planForm.maxDeposit || "0", USDC_DECIMALS),
         BigInt(planForm.penaltyBps)
       )
     );
@@ -127,7 +152,7 @@ export default function App() {
 
   async function handlePause(nextPaused) {
     const vault = new Contract(CONTRACTS.vault, vaultAbi, signer);
-    await runTx(nextPaused ? "Pause system" : "Unpause system", () =>
+    await runTx(nextPaused ? "Pause withdrawals" : "Resume withdrawals", () =>
       nextPaused ? vault.pause() : vault.unpause()
     );
   }
@@ -145,24 +170,24 @@ export default function App() {
           <p className="eyebrow">Blockchain Savings</p>
           <h1>Term Deposit Console</h1>
           <p className="lead">
-            Principal ở `SavingCore`, interest ở `VaultManager`, penalty về `feeReceiver`.
+            Principal stays in SavingCore. Interest stays in VaultManager until it is paid out.
           </p>
         </div>
         <button className="primary" onClick={connectWallet}>
-          {account ? "Đã kết nối" : "Kết nối MetaMask"}
+          {account ? "Wallet Connected" : "Connect MetaMask"}
         </button>
       </header>
 
       <section className="status-grid">
         <div className="card">
           <h3>Wallet</h3>
-          <p>{account || "Chưa kết nối"}</p>
-          <small>{network || "Chưa có network"}</small>
+          <p>{account || "Not connected"}</p>
+          <small>{network || "No network"}</small>
         </div>
         <div className="card">
           <h3>Vault</h3>
           <p>{vaultBalance} USDC</p>
-          <small>{paused ? "System paused" : "System active"}</small>
+          <small>{paused ? "Withdrawals paused" : "Withdrawals active"}</small>
         </div>
         <div className="card">
           <h3>Contracts</h3>
@@ -172,13 +197,46 @@ export default function App() {
         </div>
       </section>
 
+      <section className="card">
+        <h2>Available Plans</h2>
+        {!plans.length && <p>No plans created yet.</p>}
+        <div className="deposit-list">
+          {plans.map((plan) => (
+            <article key={plan.planId.toString()} className="deposit-item">
+              <div>
+                <strong>Plan #{plan.planId.toString()}</strong>
+                <p>Tenor: {plan.tenorDays.toString()} days</p>
+                <p>APR: {plan.aprBps.toString()} bps</p>
+                <p>Min deposit: {formatAmount(plan.minDeposit)} USDC</p>
+                <p>
+                  Max deposit:{" "}
+                  {plan.maxDeposit === 0n ? "No cap" : `${formatAmount(plan.maxDeposit)} USDC`}
+                </p>
+                <p>Penalty: {plan.earlyWithdrawPenaltyBps.toString()} bps</p>
+                <p>Status: {plan.enabled ? "Enabled" : "Disabled"}</p>
+              </div>
+              <div className="actions">
+                <button
+                  onClick={() => setSelectedPlanId(plan.planId.toString())}
+                  disabled={!plan.enabled}
+                >
+                  Use This Plan
+                </button>
+              </div>
+            </article>
+          ))}
+        </div>
+      </section>
+
       <section className="panel-grid">
         <div className="card">
           <h2>User Actions</h2>
+          <label>Selected plan</label>
+          <input value={selectedPlanId} onChange={(e) => setSelectedPlanId(e.target.value)} />
           <label>Deposit amount (USDC)</label>
           <input value={depositAmount} onChange={(e) => setDepositAmount(e.target.value)} />
-          <button className="primary" disabled={!canUseContracts || paused} onClick={handleDeposit}>
-            Deposit vào Plan #1
+          <button className="primary" disabled={!canUseContracts} onClick={handleOpenDeposit}>
+            Open Deposit
           </button>
         </div>
 
@@ -194,59 +252,87 @@ export default function App() {
             value={planForm.aprBps}
             onChange={(e) => setPlanForm({ ...planForm, aprBps: e.target.value })}
           />
-          <label>Min amount (USDC)</label>
+          <label>Min deposit (USDC)</label>
           <input
-            value={planForm.minAmount}
-            onChange={(e) => setPlanForm({ ...planForm, minAmount: e.target.value })}
+            value={planForm.minDeposit}
+            onChange={(e) => setPlanForm({ ...planForm, minDeposit: e.target.value })}
+          />
+          <label>Max deposit (USDC, 0 = no cap)</label>
+          <input
+            value={planForm.maxDeposit}
+            onChange={(e) => setPlanForm({ ...planForm, maxDeposit: e.target.value })}
           />
           <label>Penalty (bps)</label>
           <input
             value={planForm.penaltyBps}
             onChange={(e) => setPlanForm({ ...planForm, penaltyBps: e.target.value })}
           />
-          <button onClick={handleCreatePlan} disabled={!canUseContracts}>Create Plan</button>
+          <button onClick={handleCreatePlan} disabled={!canUseContracts}>
+            Create Plan
+          </button>
           <label>Vault funding (USDC)</label>
           <input value={vaultAmount} onChange={(e) => setVaultAmount(e.target.value)} />
-          <button onClick={handleFundVault} disabled={!canUseContracts}>Fund Vault</button>
-          <button onClick={() => handlePause(true)} disabled={!canUseContracts || paused}>Pause</button>
-          <button onClick={() => handlePause(false)} disabled={!canUseContracts || !paused}>Unpause</button>
+          <button onClick={handleFundVault} disabled={!canUseContracts}>
+            Fund Vault
+          </button>
+          <button onClick={() => handlePause(true)} disabled={!canUseContracts || paused}>
+            Pause Withdrawals
+          </button>
+          <button onClick={() => handlePause(false)} disabled={!canUseContracts || !paused}>
+            Resume Withdrawals
+          </button>
         </div>
       </section>
 
       <section className="card">
-        <h2>Deposits của user</h2>
-        {!depositIds.length && <p>Chưa có deposit nào.</p>}
+        <h2>Your Deposit Certificates</h2>
+        {!deposits.length && <p>No deposits found for this wallet.</p>}
         <div className="deposit-list">
-          {deposits.map((deposit) => (
-            <article key={deposit.tokenId.toString()} className="deposit-item">
-              <div>
-                <strong>Deposit #{deposit.tokenId.toString()}</strong>
-                <p>Plan: {deposit.planId.toString()}</p>
-                <p>Principal: {formatAmount(deposit.principal)} USDC</p>
-                <p>Expected interest: {formatAmount(deposit.expectedInterest)} USDC</p>
-                <p>Maturity: {new Date(Number(deposit.maturityAt) * 1000).toLocaleString()}</p>
-                <p>Status: {statusLabel(deposit.status)}</p>
-              </div>
-              <div className="actions">
-                <button
-                  onClick={() => handleWithdraw(deposit.tokenId)}
-                  disabled={!canUseContracts || paused || statusLabel(deposit.status) !== "Active"}
-                >
-                  Withdraw
-                </button>
-                <button
-                  onClick={() => handleRenew(deposit.tokenId)}
-                  disabled={!canUseContracts || paused || statusLabel(deposit.status) !== "Active"}
-                >
-                  Renew
-                </button>
-              </div>
-            </article>
-          ))}
+          {deposits.map((deposit) => {
+            const depositId = deposit.depositId.toString();
+            const isActive = statusLabel(deposit.status) === "Active";
+            const isMatured = Number(deposit.maturityAt) * 1000 <= Date.now();
+
+            return (
+              <article key={depositId} className="deposit-item">
+                <div>
+                  <strong>Deposit #{depositId}</strong>
+                  <p>Plan: {deposit.planId.toString()}</p>
+                  <p>Principal: {formatAmount(deposit.principal)} USDC</p>
+                  <p>Expected interest: {formatAmount(deposit.expectedInterest)} USDC</p>
+                  <p>APR at open: {deposit.aprBpsAtOpen.toString()} bps</p>
+                  <p>Penalty at open: {deposit.penaltyBpsAtOpen.toString()} bps</p>
+                  <p>Tenor at open: {deposit.tenorDaysAtOpen.toString()} days</p>
+                  <p>Maturity: {new Date(Number(deposit.maturityAt) * 1000).toLocaleString()}</p>
+                  <p>Status: {statusLabel(deposit.status)}</p>
+                </div>
+                <div className="actions">
+                  <button
+                    onClick={() => handleWithdrawAtMaturity(deposit.depositId)}
+                    disabled={!canUseContracts || paused || !isActive || !isMatured}
+                  >
+                    Withdraw At Maturity
+                  </button>
+                  <button
+                    onClick={() => handleEarlyWithdraw(deposit.depositId)}
+                    disabled={!canUseContracts || paused || !isActive || isMatured}
+                  >
+                    Early Withdraw
+                  </button>
+                  <button
+                    onClick={() => handleRenew(deposit.depositId, selectedPlanId)}
+                    disabled={!canUseContracts || paused || !isActive || !isMatured}
+                  >
+                    Renew Into Selected Plan
+                  </button>
+                </div>
+              </article>
+            );
+          })}
         </div>
       </section>
 
-      <footer className="message-bar">{message || "Sẵn sàng."}</footer>
+      <footer className="message-bar">{message || "Ready."}</footer>
     </div>
   );
 }
