@@ -1,3 +1,5 @@
+const fs = require("fs");
+const path = require("path");
 const hre = require("hardhat");
 
 const USDC_DECIMALS = 6n;
@@ -46,9 +48,34 @@ async function main() {
   await core.createPlan(30, 1200, usdc(100), usdc(5_000), 500);
   await core.createPlan(90, 1500, usdc(100), usdc(20_000), 250);
 
+  const frontendConfigPath = path.join(__dirname, "..", "frontend", "src", "config.js");
+  const configContents = `export const CONTRACTS = {
+  token: "${await token.getAddress()}",
+  vault: "${await vault.getAddress()}",
+  core: "${await core.getAddress()}"
+};
+
+export const DEMO_ACCOUNTS = {
+  admin: "${deployer.address}",
+  feeReceiver: "${feeReceiver.address}",
+  alice: "${alice.address}",
+  bob: "${bob.address}"
+};
+
+export const LOCAL_NETWORK = {
+  chainId: 31337,
+  rpcUrl: "http://127.0.0.1:8545"
+};
+
+export const AUTO_RENEW_GRACE_PERIOD_DAYS = 3;
+export const USDC_DECIMALS = 6;
+`;
+  fs.writeFileSync(frontendConfigPath, configContents);
+
   console.log("MockUSDC:", await token.getAddress());
   console.log("VaultManager:", await vault.getAddress());
   console.log("SavingCore:", await core.getAddress());
+  console.log("Updated frontend config:", frontendConfigPath);
   console.log("FeeReceiver:", feeReceiver.address);
   console.log("Demo User Alice:", alice.address);
   console.log("Demo User Bob:", bob.address);

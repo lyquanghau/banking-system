@@ -117,7 +117,7 @@ contract SavingCore is ERC721, Ownable, ReentrancyGuard {
         transferOwnership(initialOwner);
     }
 
-    modifier whenWithdrawalsNotPaused() {
+    modifier whenSystemNotPaused() {
         if (vaultManager.paused()) revert SystemPaused();
         _;
     }
@@ -189,6 +189,7 @@ contract SavingCore is ERC721, Ownable, ReentrancyGuard {
     function openDeposit(uint256 planId, uint256 amount)
         external
         nonReentrant
+        whenSystemNotPaused
         returns (uint256 depositId)
     {
         Plan storage plan = _getEnabledPlan(planId);
@@ -213,7 +214,7 @@ contract SavingCore is ERC721, Ownable, ReentrancyGuard {
     function withdrawAtMaturity(uint256 depositId)
         external
         nonReentrant
-        whenWithdrawalsNotPaused
+        whenSystemNotPaused
     {
         Deposit storage userDeposit = _getActiveDepositOwnedBySender(depositId);
         if (block.timestamp < userDeposit.maturityAt) revert DepositNotMatured();
@@ -232,7 +233,7 @@ contract SavingCore is ERC721, Ownable, ReentrancyGuard {
     function earlyWithdraw(uint256 depositId)
         external
         nonReentrant
-        whenWithdrawalsNotPaused
+        whenSystemNotPaused
     {
         Deposit storage userDeposit = _getActiveDepositOwnedBySender(depositId);
         if (block.timestamp >= userDeposit.maturityAt) revert DepositNotMatured();
@@ -253,7 +254,7 @@ contract SavingCore is ERC721, Ownable, ReentrancyGuard {
     function renewDeposit(uint256 depositId, uint256 newPlanId)
         external
         nonReentrant
-        whenWithdrawalsNotPaused
+        whenSystemNotPaused
         returns (uint256 newDepositId)
     {
         Deposit storage oldDeposit = _getActiveDepositOwnedBySender(depositId);
@@ -291,7 +292,7 @@ contract SavingCore is ERC721, Ownable, ReentrancyGuard {
     function autoRenewDeposit(uint256 depositId)
         external
         nonReentrant
-        whenWithdrawalsNotPaused
+        whenSystemNotPaused
         returns (uint256 newDepositId)
     {
         Deposit storage oldDeposit = deposits[depositId];

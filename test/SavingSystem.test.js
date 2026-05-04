@@ -330,7 +330,7 @@ describe("Blockchain Savings System", function () {
     expect(await token.balanceOf(await vault.getAddress())).to.equal(vaultBefore - 500n * DECIMALS);
   });
 
-  it("blocks withdrawals and renewals while paused, but still allows opening deposits", async function () {
+  it("blocks user actions while paused, including opening new deposits", async function () {
     const fixture = await loadFixture(deployFixture);
     await createPlanAndFund(fixture);
 
@@ -354,7 +354,10 @@ describe("Blockchain Savings System", function () {
     );
 
     await token.connect(alice).approve(await core.getAddress(), amount);
-    await expect(core.connect(alice).openDeposit(1, amount)).to.emit(core, "DepositOpened");
+    await expect(core.connect(alice).openDeposit(1, amount)).to.be.revertedWithCustomError(
+      core,
+      "SystemPaused"
+    );
   });
 
   it("preserves accounting invariants across transfer, renew, and early withdrawal flows", async function () {

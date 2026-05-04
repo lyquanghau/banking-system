@@ -36,7 +36,7 @@ This project implements an on-chain term deposit system with three contracts:
 
 ## Local Development
 
-### Contracts
+### 1. Install and test contracts
 
 ```bash
 npm install
@@ -44,14 +44,17 @@ npm run compile
 npm test
 ```
 
-### Local Node and Deployment
+### 2. Start local node and deploy demo data
 
 ```bash
 npm run node
 npm run deploy:local
 ```
 
-### Frontend
+`deploy:local` seeds demo data and automatically updates `frontend/src/config.js` with the
+latest contract addresses plus demo accounts.
+
+### 3. Start the frontend
 
 ```bash
 cd frontend
@@ -59,7 +62,16 @@ npm install
 npm run dev
 ```
 
-After deploying locally, update `frontend/src/config.js` with the deployed contract addresses.
+### 4. MetaMask local network
+
+- RPC URL: `http://127.0.0.1:8545`
+- Chain ID: `31337`
+- Add the local network manually in MetaMask
+- Import accounts from the `npm run node` output
+- Recommended demo wallets:
+  - `Admin`: creates plans, funds vault, pauses the system
+  - `Alice` / `Bob`: open deposits, withdraw, renew, auto-renew
+- No real wallet funds are needed; use only Hardhat local accounts imported into MetaMask
 
 ## Frontend Demo
 
@@ -70,7 +82,31 @@ The React demo supports:
 - Opening deposits
 - Viewing deposit certificate NFTs for the connected wallet
 - Mature withdrawal, early withdrawal, and manual renew
+- Auto-renew after `maturity + 3 days`
 - Admin plan creation, vault funding, and pause controls
+- Demo account and local network hints directly in the UI
+
+## Suggested Demo Script
+
+Record a short 3-5 minute walkthrough in this order:
+
+1. Connect MetaMask to `localhost:31337`
+2. Show the seeded plans and current vault balance
+3. Open a deposit as Alice or Bob
+4. Show one withdrawal flow:
+   - early withdraw, or
+   - mature withdraw after time travel/local setup
+5. Show one renew flow:
+   - manual renew after maturity, or
+   - auto-renew after `maturity + 3 days`
+6. Switch to Admin and pause/unpause the system
+
+## Assumptions
+
+- Principal remains in `SavingCore`; interest remains in `VaultManager`
+- APR and early-withdraw penalty are snapshotted when a deposit is opened
+- Auto-renew preserves the original APR snapshot and is only available after `maturity + 3 days`
+- While paused, user actions are blocked: open deposit, withdraw, and renew
 
 ## Notes
 
