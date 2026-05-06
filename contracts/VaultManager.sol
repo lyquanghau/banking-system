@@ -6,6 +6,10 @@ import {Pausable} from "@openzeppelin/contracts/security/Pausable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
+interface ISavingCoreAccounting {
+    function totalInterestObligationOutstanding() external view returns (uint256);
+}
+
 contract VaultManager is Ownable, Pausable {
     using SafeERC20 for IERC20;
 
@@ -19,6 +23,7 @@ contract VaultManager is Ownable, Pausable {
     event VaultWithdrawn(address indexed to, uint256 amount);
     event InterestPaid(address indexed to, uint256 amount);
 
+    error InsufficientFreeLiquidity();
     error UnauthorizedCore();
     error ZeroAddress();
 
@@ -53,6 +58,13 @@ contract VaultManager is Ownable, Pausable {
     }
 
     function withdrawVault(uint256 amount) external onlyOwner {
+        uint256 balance = token.balanceOf(address(this));
+        uint256 reserved = savingCore == address(0)
+            ? 0
+            : ISavingCoreAccounting(savingCore).totalInterestObligationOutstanding();
+        uint256 freeLiquidity = balance > reserved ? balance - reserved : 0;
+
+        if (amount > freeLiquidity) revert InsufficientFreeLiquidity();
         token.safeTransfer(msg.sender, amount);
         emit VaultWithdrawn(msg.sender, amount);
     }

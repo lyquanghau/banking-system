@@ -171,7 +171,7 @@ describe("Blockchain Savings System", function () {
     expect(await core.totalInterestObligationOutstanding()).to.equal(0);
   });
 
-  it("reverts maturity withdrawal when the vault has been drained below required interest", async function () {
+  it("blocks vault withdrawal that would consume reserved interest liquidity", async function () {
     const fixture = await loadFixture(deployFixture);
     await createPlanAndFund(fixture, { fundAmount: 500n * DECIMALS });
 
@@ -181,11 +181,16 @@ describe("Blockchain Savings System", function () {
 
     const deposit = await core.getDeposit(1);
     const vaultBalance = await token.balanceOf(await vault.getAddress());
-    const remainingBalance = deposit.expectedInterest - 1n;
-    await vault.connect(owner).withdrawVault(vaultBalance - remainingBalance);
+    const freeLiquidity = vaultBalance - deposit.expectedInterest;
 
-    await time.increase(31 * DAY);
-    await expect(core.connect(alice).withdrawAtMaturity(1)).to.be.reverted;
+    await expect(vault.connect(owner).withdrawVault(freeLiquidity + 1n)).to.be.revertedWithCustomError(
+      vault,
+      "InsufficientFreeLiquidity"
+    );
+
+    await expect(vault.connect(owner).withdrawVault(freeLiquidity))
+      .to.emit(vault, "VaultWithdrawn")
+      .withArgs(owner.address, freeLiquidity);
   });
 
   it("supports early withdrawal with penalty sent to feeReceiver and zero interest", async function () {

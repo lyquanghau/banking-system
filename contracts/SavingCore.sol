@@ -265,25 +265,20 @@ contract SavingCore is ERC721, Ownable, ReentrancyGuard {
         uint256 newPrincipal = oldDeposit.principal + oldDeposit.expectedInterest;
         _validateDepositAmount(newPlan, newPrincipal);
 
-        uint256 newExpectedInterest =
-            _calculateInterest(newPrincipal, newPlan.aprBps, newPlan.tenorDays);
-        _ensureVaultCanCoverAdditionalObligation(newExpectedInterest);
+        _ensureVaultCanCoverAdditionalObligation(
+            _calculateInterest(newPrincipal, newPlan.aprBps, newPlan.tenorDays)
+        );
 
-        uint256 renewCount = oldDeposit.renewCount + 1;
-        uint256 oldInterest = oldDeposit.expectedInterest;
-        address depositOwner = ownerOf(depositId);
-
-        _closeDeposit(oldDeposit, DepositStatus.ManualRenewed);
-        vaultManager.payInterest(address(this), oldInterest);
-
-        newDepositId = _createDeposit(
-            depositOwner,
+        newDepositId = _settleRenewal(
+            oldDeposit,
+            DepositStatus.ManualRenewed,
+            ownerOf(depositId),
             newPlanId,
             newPrincipal,
             newPlan.aprBps,
             newPlan.earlyWithdrawPenaltyBps,
             newPlan.tenorDays,
-            renewCount
+            oldDeposit.renewCount + 1
         );
 
         emit Renewed(depositId, newDepositId, newPrincipal, newPlanId);
@@ -308,25 +303,19 @@ contract SavingCore is ERC721, Ownable, ReentrancyGuard {
         );
         _ensureVaultCanCoverAdditionalObligation(newExpectedInterest);
 
-        uint256 renewCount = oldDeposit.renewCount + 1;
-        uint256 oldInterest = oldDeposit.expectedInterest;
-        address depositOwner = ownerOf(depositId);
-        uint256 planId = oldDeposit.planId;
-
-        _closeDeposit(oldDeposit, DepositStatus.AutoRenewed);
-        vaultManager.payInterest(address(this), oldInterest);
-
-        newDepositId = _createDeposit(
-            depositOwner,
-            planId,
+        newDepositId = _settleRenewal(
+            oldDeposit,
+            DepositStatus.AutoRenewed,
+            ownerOf(depositId),
+            oldDeposit.planId,
             newPrincipal,
             oldDeposit.aprBpsAtOpen,
             oldDeposit.penaltyBpsAtOpen,
             oldDeposit.tenorDaysAtOpen,
-            renewCount
+            oldDeposit.renewCount + 1
         );
 
-        emit Renewed(depositId, newDepositId, newPrincipal, planId);
+        emit Renewed(depositId, newDepositId, newPrincipal, oldDeposit.planId);
     }
 
     function _createDeposit(
@@ -375,6 +364,33 @@ contract SavingCore is ERC721, Ownable, ReentrancyGuard {
 
         totalPrincipalOutstanding -= userDeposit.principal;
         totalInterestObligationOutstanding -= userDeposit.expectedInterest;
+    }
+
+    function _settleRenewal(
+        Deposit storage oldDeposit,
+        DepositStatus nextStatus,
+        address depositOwner,
+        uint256 newPlanId,
+        uint256 newPrincipal,
+        uint256 aprBpsAtOpen,
+        uint256 penaltyBpsAtOpen,
+        uint256 tenorDaysAtOpen,
+        uint256 renewCount
+    ) internal returns (uint256 newDepositId) {
+        uint256 oldInterest = oldDeposit.expectedInterest;
+
+        _closeDeposit(oldDeposit, nextStatus);
+        vaultManager.payInterest(address(this), oldInterest);
+
+        newDepositId = _createDeposit(
+            depositOwner,
+            newPlanId,
+            newPrincipal,
+            aprBpsAtOpen,
+            penaltyBpsAtOpen,
+            tenorDaysAtOpen,
+            renewCount
+        );
     }
 
     function _calculateInterest(uint256 principal, uint256 aprBps, uint256 tenorDays)

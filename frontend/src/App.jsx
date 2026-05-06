@@ -84,10 +84,9 @@ function formatWalletError(error) {
   return error?.shortMessage || error?.reason || error?.message || "MetaMask connection failed.";
 }
 
-function getProgressPercent(startAt, maturityAt) {
-  const now = Date.now() / 1000;
+function getProgressPercent(startAt, maturityAt, nowSeconds = Date.now() / 1000) {
   const total = Math.max(Number(maturityAt - startAt), 1);
-  const elapsed = Math.min(Math.max(now - Number(startAt), 0), total);
+  const elapsed = Math.min(Math.max(nowSeconds - Number(startAt), 0), total);
   return Math.round((elapsed / total) * 100);
 }
 
@@ -102,6 +101,78 @@ function getTxTone(message) {
 
 function formatDateTime(unixSeconds) {
   return new Date(Number(unixSeconds) * 1000).toLocaleString();
+}
+
+function getActionTitle(action) {
+  if (action === "settle") return "Confirm settlement";
+  if (action === "earlyExit") return "Confirm early exit";
+  if (action === "manualRenew") return "Confirm manual renew";
+  if (action === "autoRenew") return "Confirm auto renew";
+  return "Confirm action";
+}
+
+function getActionSummary(action, deposit, selectedPlanId) {
+  if (action === "settle") {
+    return `User will receive ${formatAmount(deposit.principal)} USDC principal from SavingCore and ${formatAmount(deposit.expectedInterest)} USDC interest from VaultManager.`;
+  }
+
+  if (action === "earlyExit") {
+    const penalty = (deposit.principal * deposit.penaltyBpsAtOpen) / 10_000n;
+    const returned = deposit.principal - penalty;
+    return `User will receive ${formatAmount(returned)} USDC. Penalty: ${formatAmount(penalty)} USDC. Interest payout: 0 USDC.`;
+  }
+
+  if (action === "manualRenew") {
+    const newPrincipal = deposit.principal + deposit.expectedInterest;
+    return `This will close the current deposit and create a new one using plan #${selectedPlanId}. New principal: ${formatAmount(newPrincipal)} USDC.`;
+  }
+
+  if (action === "autoRenew") {
+    const newPrincipal = deposit.principal + deposit.expectedInterest;
+    return `This will auto-renew using the original APR snapshot and tenor. New principal: ${formatAmount(newPrincipal)} USDC.`;
+  }
+
+  return "";
+}
+
+function formatContractError(error, context = {}) {
+  const rawMessage = [
+    error?.shortMessage,
+    error?.reason,
+    error?.message,
+    error?.info?.error?.message,
+    error?.data?.message
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  if (rawMessage.includes("AmountBelowMinimum")) {
+    const minDeposit = context.minDeposit ? `${formatAmount(context.minDeposit)} USDC` : "the minimum";
+    return `Deposit amount is below the minimum required for this plan. Minimum deposit: ${minDeposit}.`;
+  }
+
+  if (rawMessage.includes("AmountAboveMaximum")) {
+    const maxDeposit = context.maxDeposit ? `${formatAmount(context.maxDeposit)} USDC` : "the maximum";
+    return `Deposit amount is above the maximum allowed for this plan. Maximum deposit: ${maxDeposit}.`;
+  }
+
+  if (rawMessage.includes("PlanDisabled")) {
+    return "This saving plan is currently disabled.";
+  }
+
+  if (rawMessage.includes("VaultInsufficient")) {
+    return "The vault does not have enough reserved liquidity to accept this deposit yet.";
+  }
+
+  if (rawMessage.includes("SystemPaused")) {
+    return "The system is paused. Try again after the operator resumes service.";
+  }
+
+  if (error?.code === 4001) {
+    return "The wallet request was rejected in MetaMask.";
+  }
+
+  return error?.shortMessage || error?.reason || error?.message || "The transaction failed.";
 }
 
 export default function App() {
@@ -128,6 +199,9 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [hasMetaMask, setHasMetaMask] = useState(Boolean(window.ethereum));
   const [adminOpen, setAdminOpen] = useState(false);
+  const [popup, setPopup] = useState({ open: false, title: "", body: "" });
+  const [chainNowMs, setChainNowMs] = useState(Date.now());
+  const [confirmAction, setConfirmAction] = useState(null);
 
   const canUseContracts =
     account &&
@@ -152,6 +226,18 @@ export default function App() {
     setChainId("");
     setWalletTokenBalance("0");
     setDeposits([]);
+  }
+
+  function showPopup(title, body) {
+    setPopup({ open: true, title, body });
+  }
+
+  function closePopup() {
+    setPopup({ open: false, title: "", body: "" });
+  }
+
+  function closeConfirmAction() {
+    setConfirmAction(null);
   }
 
   async function connectWallet() {
@@ -224,6 +310,7 @@ export default function App() {
     const core = new Contract(CONTRACTS.core, coreAbi, activeSigner);
     const vault = new Contract(CONTRACTS.vault, vaultAbi, activeSigner);
     const token = new Contract(CONTRACTS.token, tokenAbi, activeSigner);
+    const latestBlock = await activeSigner.provider.getBlock("latest");
 
     const [nextPlanId, ids, rawPaused, rawVaultBalance, rawWalletTokenBalance] = await Promise.all([
       core.nextPlanId(),
@@ -248,13 +335,16 @@ export default function App() {
     setPaused(rawPaused);
     setVaultBalance(formatAmount(rawVaultBalance));
     setWalletTokenBalance(formatAmount(rawWalletTokenBalance));
+    if (latestBlock?.timestamp) {
+      setChainNowMs(Number(latestBlock.timestamp) * 1000);
+    }
 
     if (nextPlans.length && !nextPlans.find((plan) => plan.planId.toString() === selectedPlanId)) {
       setSelectedPlanId(nextPlans[0].planId.toString());
     }
   }
 
-  async function runTx(label, fn) {
+  async function runTx(label, fn, options = {}) {
     try {
       setMessage(`${label}...`);
       const tx = await fn();
@@ -262,17 +352,55 @@ export default function App() {
       setMessage(`${label} succeeded.`);
       await refreshData();
     } catch (error) {
-      setMessage(error?.shortMessage || error?.reason || error?.message || `${label} failed.`);
+      const nextMessage = formatContractError(error, options.errorContext);
+      setMessage(nextMessage);
+      showPopup(options.errorTitle || `${label} failed`, nextMessage);
     }
   }
 
   async function handleOpenDeposit() {
+    const parsedAmount = Number(depositAmount || "0");
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
+      showPopup("Invalid deposit amount", "Enter a valid deposit amount greater than zero.");
+      return;
+    }
+
+    if (selectedPlan) {
+      if (selectedPlan.minDeposit > 0n) {
+        const minDeposit = Number(formatUnits(selectedPlan.minDeposit, USDC_DECIMALS));
+        if (parsedAmount < minDeposit) {
+          const nextMessage = `Deposit amount is below the minimum required for this plan. Minimum deposit: ${formatAmount(selectedPlan.minDeposit)} USDC.`;
+          setMessage(nextMessage);
+          showPopup("Deposit below minimum", nextMessage);
+          return;
+        }
+      }
+
+      if (selectedPlan.maxDeposit > 0n) {
+        const maxDeposit = Number(formatUnits(selectedPlan.maxDeposit, USDC_DECIMALS));
+        if (parsedAmount > maxDeposit) {
+          const nextMessage = `Deposit amount is above the maximum allowed for this plan. Maximum deposit: ${formatAmount(selectedPlan.maxDeposit)} USDC.`;
+          setMessage(nextMessage);
+          showPopup("Deposit above maximum", nextMessage);
+          return;
+        }
+      }
+    }
+
     const token = new Contract(CONTRACTS.token, tokenAbi, signer);
     const core = new Contract(CONTRACTS.core, coreAbi, signer);
     const amount = parseUnits(depositAmount || "0", USDC_DECIMALS);
 
     await runTx("Approve token", () => token.approve(CONTRACTS.core, amount));
-    await runTx("Open deposit", () => core.openDeposit(BigInt(selectedPlanId), amount));
+    await runTx("Open deposit", () => core.openDeposit(BigInt(selectedPlanId), amount), {
+      errorTitle: "Open deposit failed",
+      errorContext: selectedPlan
+        ? {
+            minDeposit: selectedPlan.minDeposit,
+            maxDeposit: selectedPlan.maxDeposit
+          }
+        : {}
+    });
   }
 
   async function handleWithdrawAtMaturity(depositId) {
@@ -297,6 +425,41 @@ export default function App() {
   async function handleAutoRenew(depositId) {
     const core = new Contract(CONTRACTS.core, coreAbi, signer);
     await runTx(`Auto renew deposit #${depositId}`, () => core.autoRenewDeposit(depositId));
+  }
+
+  function openConfirmAction(action, deposit) {
+    setConfirmAction({
+      action,
+      deposit
+    });
+  }
+
+  async function executeConfirmedAction() {
+    if (!confirmAction) {
+      return;
+    }
+
+    const { action, deposit } = confirmAction;
+    closeConfirmAction();
+
+    if (action === "settle") {
+      await handleWithdrawAtMaturity(deposit.depositId);
+      return;
+    }
+
+    if (action === "earlyExit") {
+      await handleEarlyWithdraw(deposit.depositId);
+      return;
+    }
+
+    if (action === "manualRenew") {
+      await handleRenew(deposit.depositId, selectedPlanId);
+      return;
+    }
+
+    if (action === "autoRenew") {
+      await handleAutoRenew(deposit.depositId);
+    }
   }
 
   async function handleCreatePlan() {
@@ -335,6 +498,18 @@ export default function App() {
   }, [signer, account, canUseContracts]);
 
   useEffect(() => {
+    if (!signer || !canUseContracts) {
+      return undefined;
+    }
+
+    const intervalId = window.setInterval(() => {
+      refreshData();
+    }, 15000);
+
+    return () => window.clearInterval(intervalId);
+  }, [signer, account, canUseContracts]);
+
+  useEffect(() => {
     if (!window.ethereum) {
       return undefined;
     }
@@ -363,6 +538,88 @@ export default function App() {
 
   return (
     <div className="app-shell">
+      {confirmAction && (
+        <div className="popup-backdrop" onClick={closeConfirmAction} role="presentation">
+          <div
+            className="popup-card"
+            onClick={(event) => event.stopPropagation()}
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="confirm-action-title"
+          >
+            <div className="popup-head">
+              <div>
+                <p className="eyebrow">Deposit Review</p>
+                <h2 id="confirm-action-title">{getActionTitle(confirmAction.action)}</h2>
+              </div>
+              <button type="button" onClick={closeConfirmAction}>
+                Close
+              </button>
+            </div>
+            <div className="confirm-grid">
+              <div>
+                <span>Certificate</span>
+                <strong className="data-mono">#{confirmAction.deposit.depositId.toString()}</strong>
+              </div>
+              <div>
+                <span>Plan</span>
+                <strong className="data-mono">#{confirmAction.deposit.planId.toString()}</strong>
+              </div>
+              <div>
+                <span>Principal</span>
+                <strong className="data-mono">{formatAmount(confirmAction.deposit.principal)} USDC</strong>
+              </div>
+              <div>
+                <span>Interest</span>
+                <strong className="data-mono">{formatAmount(confirmAction.deposit.expectedInterest)} USDC</strong>
+              </div>
+              <div>
+                <span>Maturity</span>
+                <strong>{formatDateTime(confirmAction.deposit.maturityAt)}</strong>
+              </div>
+              <div>
+                <span>Status</span>
+                <strong>{statusLabel(confirmAction.deposit.status)}</strong>
+              </div>
+            </div>
+            <p className="popup-copy">
+              {getActionSummary(confirmAction.action, confirmAction.deposit, selectedPlanId)}
+            </p>
+            <div className="popup-actions">
+              <button type="button" onClick={closeConfirmAction}>
+                Cancel
+              </button>
+              <button className="primary" type="button" onClick={executeConfirmedAction}>
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {popup.open && (
+        <div className="popup-backdrop" onClick={closePopup} role="presentation">
+          <div
+            className="popup-card"
+            onClick={(event) => event.stopPropagation()}
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="popup-title"
+          >
+            <div className="popup-head">
+              <div>
+                <p className="eyebrow">Transaction Notice</p>
+                <h2 id="popup-title">{popup.title}</h2>
+              </div>
+              <button type="button" onClick={closePopup}>
+                Close
+              </button>
+            </div>
+            <p className="popup-copy">{popup.body}</p>
+          </div>
+        </div>
+      )}
+
       <div className="ambient ambient-one" />
       <div className="ambient ambient-two" />
       <div className="ambient ambient-three" />
@@ -606,9 +863,19 @@ export default function App() {
             const maturityTimeMs = Number(deposit.maturityAt) * 1000;
             const autoRenewTimeMs =
               maturityTimeMs + AUTO_RENEW_GRACE_PERIOD_DAYS * 24 * 60 * 60 * 1000;
-            const isMatured = maturityTimeMs <= Date.now();
-            const canAutoRenew = autoRenewTimeMs <= Date.now();
-            const progress = getProgressPercent(deposit.startAt, deposit.maturityAt);
+            const isMatured = maturityTimeMs <= chainNowMs;
+            const canAutoRenew = autoRenewTimeMs <= chainNowMs;
+            const progress = getProgressPercent(
+              deposit.startAt,
+              deposit.maturityAt,
+              chainNowMs / 1000
+            );
+            const settleDisabled = !canUseContracts || !onExpectedNetwork || paused || !isActive || !isMatured;
+            const earlyExitDisabled = !canUseContracts || !onExpectedNetwork || paused || !isActive || isMatured;
+            const manualRenewDisabled =
+              !canUseContracts || !onExpectedNetwork || paused || !isActive || !isMatured;
+            const autoRenewDisabled =
+              !canUseContracts || !onExpectedNetwork || paused || !isActive || !canAutoRenew;
 
             return (
               <article key={depositId} className="deposit-card">
@@ -656,26 +923,26 @@ export default function App() {
 
                 <div className="deposit-actions">
                   <button
-                    onClick={() => handleWithdrawAtMaturity(deposit.depositId)}
-                    disabled={!canUseContracts || !onExpectedNetwork || paused || !isActive || !isMatured}
+                    onClick={() => openConfirmAction("settle", deposit)}
+                    disabled={settleDisabled}
                   >
                     Settle
                   </button>
                   <button
-                    onClick={() => handleEarlyWithdraw(deposit.depositId)}
-                    disabled={!canUseContracts || !onExpectedNetwork || paused || !isActive || isMatured}
+                    onClick={() => openConfirmAction("earlyExit", deposit)}
+                    disabled={earlyExitDisabled}
                   >
                     Early Exit
                   </button>
                   <button
-                    onClick={() => handleRenew(deposit.depositId, selectedPlanId)}
-                    disabled={!canUseContracts || !onExpectedNetwork || paused || !isActive || !isMatured}
+                    onClick={() => openConfirmAction("manualRenew", deposit)}
+                    disabled={manualRenewDisabled}
                   >
                     Manual Renew
                   </button>
                   <button
-                    onClick={() => handleAutoRenew(deposit.depositId)}
-                    disabled={!canUseContracts || !onExpectedNetwork || paused || !isActive || !canAutoRenew}
+                    onClick={() => openConfirmAction("autoRenew", deposit)}
+                    disabled={autoRenewDisabled}
                   >
                     Auto Renew
                   </button>

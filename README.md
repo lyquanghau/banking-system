@@ -16,6 +16,7 @@ This project implements an on-chain term deposit system with three contracts:
 - Manual renew compounds old interest into the next principal
 - Auto-renew is available after `maturity + 3 days` and preserves the original APR
 - New deposits are rejected if the vault cannot cover the new interest obligation
+- Vault withdrawals are limited to free liquidity above outstanding interest obligations
 
 ## Core User Flows
 
@@ -42,6 +43,7 @@ This project implements an on-chain term deposit system with three contracts:
 npm install
 npm run compile
 npm test
+npm run coverage
 ```
 
 ### 2. Start local node and deploy demo data
@@ -112,3 +114,4 @@ Record a short 3-5 minute walkthrough in this order:
 
 - Hardhat currently warns that Node `18.20.8` is unsupported. The project compiles and tests successfully in the current environment, but Node `20+` is the safer long-term target.
 - The frontend uses static ABI strings in `frontend/src/abi.js`.
+- Run `npm run coverage` before submission to generate a contract coverage report for mentor review.
