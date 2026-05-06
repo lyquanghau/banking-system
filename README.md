@@ -13,7 +13,7 @@ The system is built around three contracts plus a React frontend:
 
 ### `MockUSDC`
 
-- Mintable ERC20 token used only for testing and local demos
+- Mintable ERC20 token used only for testing and demos
 - Uses 6 decimals to resemble USDC-style token units
 
 ### `SavingCore`
@@ -57,28 +57,38 @@ The system is built around three contracts plus a React frontend:
 
 ```text
 BankingSystem/
-├─ contracts/
-│  ├─ MockUSDC.sol          # Test ERC20 token with 6 decimals
-│  ├─ SavingCore.sol        # Savings logic, principal accounting, ERC721 certificates
-│  └─ VaultManager.sol      # Interest vault, fee receiver, pause controls
-├─ test/
-│  └─ SavingSystem.test.js  # Hardhat test suite for contract flows and invariants
-├─ scripts/
-│  └─ deploy.js             # Local deployment and frontend config bootstrap
-├─ frontend/
-│  ├─ src/
-│  │  ├─ App.jsx            # Main React dashboard for user and admin flows
-│  │  ├─ abi.js             # Frontend ABI definitions
-│  │  ├─ config.js          # Contract addresses and chain config
-│  │  └─ styles.css         # Frontend styling
-│  ├─ package.json          # Frontend scripts and dependencies
-│  └─ vite.config.js        # Vite configuration
-├─ coverage.json            # Existing coverage artifact
-├─ hardhat.config.js        # Hardhat compiler and project configuration
-├─ package.json             # Contract-side scripts and dependencies
-├─ Project-Explanation-Notes.md  # Project explanation notes for demo preparation
-├─ jump31days.ps1           # Helper script for maturity testing on local Hardhat
-└─ jump33days.ps1           # Helper script for auto-renew testing on local Hardhat
+|-- contracts/
+|   |-- MockUSDC.sol
+|   |-- SavingCore.sol
+|   `-- VaultManager.sol
+|-- test/
+|   `-- SavingSystem.test.js
+|-- scripts/
+|   |-- deploy.js
+|   |-- autoRenewBot.js
+|   `-- loadEnv.js
+|-- deploy/
+|   |-- 1-deploy-mockusdc.ts
+|   |-- 2-deploy-vaultmanager.ts
+|   |-- 3-deploy-savingcore.ts
+|   |-- 4-init-testnet.ts
+|   |-- 5-sync-frontend-config.ts
+|   |-- 6-deploy-testnet-all.ts
+|   `-- 7-mint-test-users.ts
+|-- deployments/
+|   `-- sepolia.json
+|-- frontend/
+|   |-- src/
+|   |   |-- App.jsx
+|   |   |-- abi.js
+|   |   |-- config.js
+|   |   `-- styles.css
+|   |-- package.json
+|   `-- vite.config.js
+|-- hardhat.config.js
+|-- package.json
+|-- jump31days.ps1
+`-- jump33days.ps1
 ```
 
 ## Prerequisites
@@ -86,9 +96,8 @@ BankingSystem/
 - Node.js `20+` recommended
 - `npm`
 - MetaMask browser extension
-- A local Hardhat node for the current demo workflow
 
-Note: the current repo is configured primarily for local development on chain `31337`.
+Note: the repo supports both local Hardhat demos on chain `31337` and Sepolia testnet deployment flows.
 
 ## Local Development
 
@@ -127,11 +136,9 @@ Current contract suite covers the main flows:
 npm run node
 ```
 
-Leave this running in its own terminal.
-
 ### 5. Deploy local demo data
 
-Open a second terminal in the same folder:
+In a second terminal:
 
 ```bash
 npm run deploy:local
@@ -164,6 +171,45 @@ Recommended local demo wallets:
 - `Admin`: create plans, manage vault, pause/unpause
 - `Alice` / `Bob`: open deposits, withdraw, renew, auto-renew
 
+## Testnet Deployment
+
+The repo includes a Sepolia-ready deployment flow.
+
+### Full testnet deploy
+
+In Windows CMD:
+
+```cmd
+cd /d D:\Blockchain\final\BankingSystem && set "DEPLOY_TARGET_NETWORK=sepolia" && npm run deploy:testnet:all
+```
+
+This flow:
+
+- deploys `MockUSDC`
+- deploys `VaultManager`
+- deploys `SavingCore`
+- initializes testnet balances, vault funding, and sample plans
+- syncs `frontend/src/config.js` to the deployed network
+
+### Sync frontend only
+
+```cmd
+cd /d D:\Blockchain\final\BankingSystem && set "DEPLOY_TARGET_NETWORK=sepolia" && npm run deploy:testnet:sync-frontend
+```
+
+### Mint test users
+
+```cmd
+cd /d D:\Blockchain\final\BankingSystem && set "DEPLOY_TARGET_NETWORK=sepolia" && npm run deploy:testnet:mint-users
+```
+
+Testnet deployment depends on valid `.env` secrets such as:
+
+- `SEPOLIA_RPC_URL`
+- `DEPLOYER_PRIVATE_KEY`
+- `FEE_RECEIVER_ADDRESS`
+- optional explorer API keys
+
 ## Frontend Capabilities
 
 ### User Features
@@ -188,17 +234,17 @@ Recommended local demo wallets:
 - Update `feeReceiver`
 - Pause or resume the system
 
-Admin visibility is based on on-chain ownership of `SavingCore` or `VaultManager`, not only on hardcoded local demo addresses.
+Admin visibility is based on on-chain ownership of `SavingCore` or `VaultManager`, not only on hardcoded demo addresses.
 
 ## Suggested Demo Flow
 
 Use this sequence for a short mentor demo:
 
-1. Connect MetaMask to `localhost:31337`.
-2. Show the available plans and current vault balance.
-3. Open a deposit as `Alice` or `Bob`.
+1. Connect MetaMask on Sepolia or local Hardhat, depending on the flow you want to show.
+2. Show available plans and current vault balance.
+3. Open a deposit as a user.
 4. Show one user action:
-   - early withdrawal, or
+   - early withdrawal on Sepolia, or
    - mature withdrawal after local time travel
 5. Show one renew action:
    - manual renew after maturity, or
@@ -213,9 +259,9 @@ Helpful local test scripts:
 
 ## Current Deployment Status
 
-- The project is ready for local demo on Hardhat chain `31337`.
+- The project is ready for local demo on Hardhat chain `31337` and testnet demo on Sepolia.
 - Local deployment is available through `npm run deploy:local`.
-- Testnet deployment scripts are also included for Sepolia and Amoy:
+- Testnet deployment scripts are included for Sepolia and Amoy:
   - `deploy:testnet:mockusdc`
   - `deploy:testnet:vaultmanager`
   - `deploy:testnet:savingcore`
@@ -223,19 +269,18 @@ Helpful local test scripts:
   - `deploy:testnet:sync-frontend`
   - `deploy:testnet:all`
   - `deploy:testnet:mint-users`
-- Frontend contract addresses are populated automatically for local runs.
+- Frontend contract addresses are populated automatically by the local deploy script and can be synced to supported testnets.
 - `hardhat.config.js` includes `localhost`, `sepolia`, and `amoy` network configuration.
-- Testnet deployment still depends on valid RPC URLs, deployer private key, and optional explorer API keys in environment variables.
 
 ## Known Limitations
 
 - `MockUSDC` is for testing only and is not a real stablecoin integration.
 - Auto-renew is automatic from the user perspective, but still requires an external caller or bot to send the transaction.
 - Testnet deployment support is present, but operational readiness depends on correct `.env` secrets and funded deployer wallets.
-- `coverage.json` exists in the repo, but coverage tooling may still depend on local environment behavior when rerun.
+- Maturity and auto-renew timing are expressed in whole days on-chain, so very short testnet tenors are not supported without contract changes.
 
 ## Notes
 
 - The frontend uses ABI strings from `frontend/src/abi.js`.
-- Local contract addresses are stored in `frontend/src/config.js`.
+- Active contract addresses and supported chain configuration are stored in `frontend/src/config.js`.
 - This project focuses on correct business-rule separation between user principal and system interest reserve.
