@@ -203,6 +203,7 @@ export default function App() {
   const [hasMetaMask, setHasMetaMask] = useState(Boolean(window.ethereum));
   const [adminOpen, setAdminOpen] = useState(false);
   const [popup, setPopup] = useState({ open: false, title: "", body: "" });
+  const [walletDisconnectOpen, setWalletDisconnectOpen] = useState(false);
   const [chainNowMs, setChainNowMs] = useState(Date.now());
   const [confirmAction, setConfirmAction] = useState(null);
   const [coreOwner, setCoreOwner] = useState("");
@@ -247,6 +248,14 @@ export default function App() {
 
   function closeConfirmAction() {
     setConfirmAction(null);
+  }
+
+  function openWalletDisconnectConfirm() {
+    setWalletDisconnectOpen(true);
+  }
+
+  function closeWalletDisconnectConfirm() {
+    setWalletDisconnectOpen(false);
   }
 
   async function connectWallet() {
@@ -302,8 +311,20 @@ export default function App() {
   }
 
   async function disconnectWallet() {
+    closeWalletDisconnectConfirm();
     resetWalletState();
-    setMessage("Disconnect this site from MetaMask in the extension if you want a full disconnect.");
+    setMessage(
+      "Wallet session cleared in this app. Remove this site in MetaMask if you want a full disconnect."
+    );
+  }
+
+  function handleWalletButtonClick() {
+    if (account) {
+      openWalletDisconnectConfirm();
+      return;
+    }
+
+    connectWallet();
   }
 
   async function refreshData(activeSigner = signer, activeAccount = account) {
@@ -673,6 +694,40 @@ export default function App() {
         </div>
       )}
 
+      {walletDisconnectOpen && (
+        <div className="popup-backdrop" onClick={closeWalletDisconnectConfirm} role="presentation">
+          <div
+            className="popup-card"
+            onClick={(event) => event.stopPropagation()}
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="wallet-disconnect-title"
+          >
+            <div className="popup-head">
+              <div>
+                <p className="eyebrow">Wallet Session</p>
+                <h2 id="wallet-disconnect-title">Disconnect wallet session</h2>
+              </div>
+              <button type="button" onClick={closeWalletDisconnectConfirm}>
+                Close
+              </button>
+            </div>
+            <p className="popup-copy">
+              This only clears the current app session. To fully disconnect this site, remove the
+              connection in MetaMask.
+            </p>
+            <div className="popup-actions">
+              <button type="button" onClick={closeWalletDisconnectConfirm}>
+                Cancel
+              </button>
+              <button className="primary" type="button" onClick={disconnectWallet}>
+                Disconnect
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="ambient ambient-one" />
       <div className="ambient ambient-two" />
       <div className="ambient ambient-three" />
@@ -690,11 +745,8 @@ export default function App() {
           </p>
         </div>
         <div className="hero-actions">
-          <button className="primary" onClick={connectWallet}>
-            {account ? "Reconnect Wallet" : "Connect MetaMask"}
-          </button>
-          <button onClick={disconnectWallet} disabled={!account}>
-            Clear Session
+          <button className="primary" onClick={handleWalletButtonClick}>
+            {account ? "Disconnect Wallet" : "Connect Wallet"}
           </button>
         </div>
       </header>
