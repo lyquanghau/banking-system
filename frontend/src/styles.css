@@ -672,11 +672,16 @@ input:hover {
   margin-top: 8px;
 }
 
+.plan-actions,
 .deposit-actions,
 .admin-actions-inline {
   display: flex;
   flex-wrap: wrap;
   gap: 10px;
+}
+
+.plan-actions button {
+  flex: 1 1 140px;
 }
 
 .deposit-actions button {
@@ -704,7 +709,7 @@ input:hover {
 
 .admin-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
   gap: 16px;
 }
 

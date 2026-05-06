@@ -1,0 +1,9 @@
+{
+  "network": "sepolia",
+  "chainId": 11155111,
+  "updatedAt": "2026-05-06T13:47:49.629Z",
+  "deployer": "0xfDade7C8B47f87367303c7FA7d6fd9997008306C",
+  "mockUsdc": "0xa0F2bbDC527638BC331224E30dF07b7eCCB01196",
+  "vaultManager": "0x2962227C0695E544faccDa78259D84414395EF6E",
+  "savingCore": "0x79391763aB4105Aa1E4869F5495C08b202B04b5F"
+}

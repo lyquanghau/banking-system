@@ -7,7 +7,15 @@
     "test": "hardhat test",
     "coverage": "hardhat coverage",
     "node": "hardhat node",
-    "deploy:local": "hardhat run scripts/deploy.js --network localhost"
+    "deploy:local": "hardhat run scripts/deploy.js --network localhost",
+    "deploy:testnet:mockusdc": "hardhat run deploy/1-deploy-mockusdc.ts",
+    "deploy:testnet:vaultmanager": "hardhat run deploy/2-deploy-vaultmanager.ts",
+    "deploy:testnet:savingcore": "hardhat run deploy/3-deploy-savingcore.ts",
+    "deploy:testnet:init": "hardhat run deploy/4-init-testnet.ts",
+    "deploy:testnet:sync-frontend": "hardhat run deploy/5-sync-frontend-config.ts",
+    "deploy:testnet:all": "hardhat run deploy/6-deploy-testnet-all.ts",
+    "deploy:testnet:mint-users": "hardhat run deploy/7-mint-test-users.ts",
+    "bot:auto-renew": "node scripts/autoRenewBot.js"
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^4.0.0",

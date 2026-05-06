@@ -3,7 +3,6 @@ import { BrowserProvider, Contract, formatUnits, parseUnits } from "ethers";
 import {
   AUTO_RENEW_GRACE_PERIOD_DAYS,
   CONTRACTS,
-  DEMO_ACCOUNTS,
   LOCAL_NETWORK,
   USDC_DECIMALS
 } from "./config";
@@ -37,8 +36,6 @@ function normalizeAddress(value) {
 function getAccountRole(account) {
   const normalized = normalizeAddress(account);
   if (!normalized) return "Guest";
-  if (normalized === normalizeAddress(DEMO_ACCOUNTS.admin)) return "Operator";
-  if (normalized === normalizeAddress(DEMO_ACCOUNTS.feeReceiver)) return "Treasury";
   return "Client";
 }
 
@@ -189,6 +186,12 @@ export default function App() {
   const [selectedPlanId, setSelectedPlanId] = useState("1");
   const [depositAmount, setDepositAmount] = useState("1000");
   const [vaultAmount, setVaultAmount] = useState("5000");
+  const [vaultWithdrawAmount, setVaultWithdrawAmount] = useState("500");
+  const [feeReceiverAddress, setFeeReceiverAddress] = useState("");
+  const [planAdminForm, setPlanAdminForm] = useState({
+    planId: "1",
+    newAprBps: "1200"
+  });
   const [planForm, setPlanForm] = useState({
     tenorDays: "30",
     aprBps: "1200",
@@ -202,6 +205,9 @@ export default function App() {
   const [popup, setPopup] = useState({ open: false, title: "", body: "" });
   const [chainNowMs, setChainNowMs] = useState(Date.now());
   const [confirmAction, setConfirmAction] = useState(null);
+  const [coreOwner, setCoreOwner] = useState("");
+  const [vaultOwner, setVaultOwner] = useState("");
+  const [currentFeeReceiver, setCurrentFeeReceiver] = useState("");
 
   const canUseContracts =
     account &&
@@ -211,7 +217,10 @@ export default function App() {
   const currentRole = getAccountRole(account);
   const selectedPlan = plans.find((plan) => plan.planId.toString() === selectedPlanId);
   const onExpectedNetwork = chainId === String(LOCAL_NETWORK.chainId);
-  const isAdmin = currentRole === "Operator";
+  const isAdmin =
+    normalizeAddress(account) !== "" &&
+    (normalizeAddress(account) === normalizeAddress(coreOwner) ||
+      normalizeAddress(account) === normalizeAddress(vaultOwner));
   const hasMockUsdcBalance = Number(walletTokenBalance.replace(/,/g, "")) > 0;
   const activeDeposits = deposits.filter((deposit) => statusLabel(deposit.status) === "Active");
   const totalPrincipal = activeDeposits.reduce((sum, deposit) => sum + deposit.principal, 0n);
@@ -320,6 +329,12 @@ export default function App() {
       token.balanceOf(activeAccount)
     ]);
 
+    const [rawCoreOwner, rawVaultOwner, rawFeeReceiver] = await Promise.all([
+      core.owner(),
+      vault.owner(),
+      vault.feeReceiver()
+    ]);
+
     const planPromises = [];
     for (let planId = 1n; planId < nextPlanId; planId += 1n) {
       planPromises.push(core.getPlan(planId));
@@ -335,12 +350,21 @@ export default function App() {
     setPaused(rawPaused);
     setVaultBalance(formatAmount(rawVaultBalance));
     setWalletTokenBalance(formatAmount(rawWalletTokenBalance));
+    setCoreOwner(rawCoreOwner);
+    setVaultOwner(rawVaultOwner);
+    setCurrentFeeReceiver(rawFeeReceiver);
+    if (!feeReceiverAddress) {
+      setFeeReceiverAddress(rawFeeReceiver);
+    }
     if (latestBlock?.timestamp) {
       setChainNowMs(Number(latestBlock.timestamp) * 1000);
     }
 
     if (nextPlans.length && !nextPlans.find((plan) => plan.planId.toString() === selectedPlanId)) {
       setSelectedPlanId(nextPlans[0].planId.toString());
+    }
+    if (nextPlans.length && !nextPlans.find((plan) => plan.planId.toString() === planAdminForm.planId)) {
+      setPlanAdminForm((current) => ({ ...current, planId: nextPlans[0].planId.toString() }));
     }
   }
 
@@ -482,6 +506,35 @@ export default function App() {
 
     await runTx("Approve vault funding", () => token.approve(CONTRACTS.vault, amount));
     await runTx("Fund vault", () => vault.fundVault(amount));
+  }
+
+  async function handleWithdrawVault() {
+    const vault = new Contract(CONTRACTS.vault, vaultAbi, signer);
+    const amount = parseUnits(vaultWithdrawAmount || "0", USDC_DECIMALS);
+    await runTx("Withdraw vault liquidity", () => vault.withdrawVault(amount), {
+      errorTitle: "Vault withdrawal failed"
+    });
+  }
+
+  async function handleSetFeeReceiver() {
+    const vault = new Contract(CONTRACTS.vault, vaultAbi, signer);
+    await runTx("Set fee receiver", () => vault.setFeeReceiver(feeReceiverAddress), {
+      errorTitle: "Set fee receiver failed"
+    });
+  }
+
+  async function handleUpdatePlan() {
+    const core = new Contract(CONTRACTS.core, coreAbi, signer);
+    await runTx(`Update plan #${planAdminForm.planId} APR`, () =>
+      core.updatePlan(BigInt(planAdminForm.planId), BigInt(planAdminForm.newAprBps))
+    );
+  }
+
+  async function handleTogglePlan(planId, enabled) {
+    const core = new Contract(CONTRACTS.core, coreAbi, signer);
+    await runTx(`${enabled ? "Disable" : "Enable"} plan #${planId}`, () =>
+      enabled ? core.disablePlan(planId) : core.enablePlan(planId)
+    );
   }
 
   async function handlePause(nextPaused) {
@@ -662,7 +715,7 @@ export default function App() {
         <article className="metric-card spotlight">
           <span className="metric-label">Wallet</span>
           <strong className="data-mono">{shortAddress(account)}</strong>
-          <small>{currentRole}</small>
+          <small>{isAdmin ? "Operator" : currentRole}</small>
           <small>{getNetworkLabel(chainId, network)}</small>
           <small>{hasMetaMask ? "MetaMask detected" : "MetaMask not detected"}</small>
         </article>
@@ -765,13 +818,23 @@ export default function App() {
                     <strong className="data-mono">{plan.earlyWithdrawPenaltyBps.toString()} bps</strong>
                   </div>
                 </div>
-                <button
-                  className={isSelected ? "secondary-selected" : ""}
-                  onClick={() => setSelectedPlanId(plan.planId.toString())}
-                  disabled={!plan.enabled}
-                >
-                  {isSelected ? "Selected" : "Use This Plan"}
-                </button>
+                <div className="plan-actions">
+                  <button
+                    className={isSelected ? "secondary-selected" : ""}
+                    onClick={() => setSelectedPlanId(plan.planId.toString())}
+                    disabled={!plan.enabled}
+                  >
+                    {isSelected ? "Selected" : "Use This Plan"}
+                  </button>
+                  {isAdmin && (
+                    <button
+                      onClick={() => handleTogglePlan(plan.planId, plan.enabled)}
+                      disabled={!canUseContracts || !onExpectedNetwork}
+                    >
+                      {plan.enabled ? "Disable Plan" : "Enable Plan"}
+                    </button>
+                  )}
+                </div>
               </article>
             );
           })}
@@ -819,12 +882,48 @@ export default function App() {
               </div>
 
               <div className="admin-card">
+                <h3>Plan Management</h3>
+                <label>Plan ID</label>
+                <input
+                  value={planAdminForm.planId}
+                  onChange={(event) =>
+                    setPlanAdminForm({ ...planAdminForm, planId: event.target.value })
+                  }
+                />
+                <label>New APR (bps)</label>
+                <input
+                  value={planAdminForm.newAprBps}
+                  onChange={(event) =>
+                    setPlanAdminForm({ ...planAdminForm, newAprBps: event.target.value })
+                  }
+                />
+                <button onClick={handleUpdatePlan} disabled={!canUseContracts || !onExpectedNetwork}>
+                  Update APR
+                </button>
+                <small>
+                  Use the plan cards above to enable or disable plans without redeploying.
+                </small>
+              </div>
+
+              <div className="admin-card">
                 <h3>Vault Operations</h3>
                 <label>Vault funding (USDC)</label>
                 <input value={vaultAmount} onChange={(event) => setVaultAmount(event.target.value)} />
                 <button onClick={handleFundVault} disabled={!canUseContracts || !onExpectedNetwork}>
                   Fund Vault
                 </button>
+                <label>Vault withdrawal (USDC)</label>
+                <input
+                  value={vaultWithdrawAmount}
+                  onChange={(event) => setVaultWithdrawAmount(event.target.value)}
+                />
+                <button
+                  onClick={handleWithdrawVault}
+                  disabled={!canUseContracts || !onExpectedNetwork}
+                >
+                  Withdraw Free Liquidity
+                </button>
+                <small>Only liquidity above reserved interest obligations can be withdrawn.</small>
                 <div className="admin-actions-inline">
                   <button
                     onClick={() => handlePause(true)}
@@ -839,6 +938,24 @@ export default function App() {
                     Resume System
                   </button>
                 </div>
+              </div>
+
+              <div className="admin-card">
+                <h3>Fee Receiver</h3>
+                <label>Current fee receiver</label>
+                <input value={currentFeeReceiver} readOnly />
+                <label>New fee receiver</label>
+                <input
+                  value={feeReceiverAddress}
+                  onChange={(event) => setFeeReceiverAddress(event.target.value)}
+                />
+                <button
+                  onClick={handleSetFeeReceiver}
+                  disabled={!canUseContracts || !onExpectedNetwork || !feeReceiverAddress}
+                >
+                  Update Fee Receiver
+                </button>
+                <small>Early-withdraw penalties are sent to this address.</small>
               </div>
             </div>
           )}

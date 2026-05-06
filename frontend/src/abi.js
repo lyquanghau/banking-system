@@ -1,4 +1,5 @@
 export const coreAbi = [
+  "function owner() view returns (address)",
   "function nextPlanId() view returns (uint256)",
   "function createPlan(uint256 tenorDays,uint256 aprBps,uint256 minDeposit,uint256 maxDeposit,uint256 earlyWithdrawPenaltyBps)",
   "function updatePlan(uint256 planId,uint256 newAprBps)",
@@ -18,8 +19,10 @@ export const coreAbi = [
 ];
 
 export const vaultAbi = [
+  "function owner() view returns (address)",
   "function fundVault(uint256 amount)",
   "function withdrawVault(uint256 amount)",
+  "function setFeeReceiver(address receiver)",
   "function pause()",
   "function unpause()",
   "function paused() view returns (bool)",

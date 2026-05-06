@@ -3,6 +3,9 @@ frontend/node_modules/
 artifacts/
 cache/
 coverage/
+coverage.json
 dist/
 frontend/dist/
 .env
+.DS_Store
+Thumbs.db

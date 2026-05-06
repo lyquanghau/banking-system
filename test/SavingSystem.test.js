@@ -335,6 +335,38 @@ describe("Blockchain Savings System", function () {
     expect(await token.balanceOf(await vault.getAddress())).to.equal(vaultBefore - 500n * DECIMALS);
   });
 
+  it("updates fee receiver, restores operations after unpause, and rejects zero-address admin config", async function () {
+    const fixture = await loadFixture(deployFixture);
+    await createPlanAndFund(fixture);
+
+    const { owner, alice, bob, token, vault, core } = fixture;
+    const amount = 1_000n * DECIMALS;
+
+    await expect(vault.connect(owner).setFeeReceiver(bob.address))
+      .to.emit(vault, "FeeReceiverSet")
+      .withArgs(bob.address);
+    expect(await vault.feeReceiver()).to.equal(bob.address);
+
+    await expect(vault.connect(owner).setFeeReceiver(ethers.ZeroAddress)).to.be.revertedWithCustomError(
+      vault,
+      "ZeroAddress"
+    );
+    await expect(vault.connect(owner).setSavingCore(ethers.ZeroAddress)).to.be.revertedWithCustomError(
+      vault,
+      "ZeroAddress"
+    );
+
+    await openDepositAs(core, token, alice, 1, amount);
+    await vault.connect(owner).pause();
+    await vault.connect(owner).unpause();
+
+    await expect(core.connect(alice).earlyWithdraw(1))
+      .to.emit(core, "Withdrawn")
+      .withArgs(1, alice.address, 950n * DECIMALS, 0, true);
+
+    expect(await token.balanceOf(bob.address)).to.equal(100_050n * DECIMALS);
+  });
+
   it("blocks user actions while paused, including opening new deposits", async function () {
     const fixture = await loadFixture(deployFixture);
     await createPlanAndFund(fixture);
